@@ -1,0 +1,12 @@
+.venv/
+data/
+.git/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+tests/
+.env
+start.bat
+start_mobile_tunnel.bat
+*.log

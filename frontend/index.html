@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="bn" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f17" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>FreeAI Hub — Multi-Model Free AI &amp; Live Voice</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
+  <link rel="apple-touch-icon" href="/static/icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
+</head>
+<body>
+  <!-- Optional PIN Lock Overlay -->
+  <div id="pinLockOverlay" class="overlay hidden" aria-hidden="true">
+    <div class="pin-card">
+      <div class="pin-logo">
+        <img src="/static/icon.svg" alt="FreeAI Hub" width="44" height="44" />
+      </div>
+      <h2>FreeAI Hub লক করা আছে</h2>
+      <p>অ্যাক্সেস করতে আপনার PIN লিখুন</p>
+      <form id="pinForm" class="pin-form">
+        <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN লিখুন..." required />
+        <button id="pinSubmitBtn" type="submit" class="btn-primary">আনলক করুন</button>
+      </form>
+      <div id="pinError" class="error-text hidden"></div>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="sidebarBackdrop" class="sidebar-backdrop hidden"></div>
+
+    <!-- Collapsible Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <img src="/static/icon.svg" alt="" width="28" height="28" />
+          <div>
+            <div class="brand-name">FreeAI Hub</div>
+            <div class="brand-tag">100% Free APIs</div>
+          </div>
+        </div>
+        <button id="sidebarCloseBtn" class="icon-btn mobile-only" title="Close sidebar" aria-label="Close sidebar">✕</button>
+      </div>
+
+      <div class="sidebar-actions">
+        <button id="newChatBtn" class="btn-new-chat">
+          <span>＋</span> নতুন চ্যাট
+        </button>
+      </div>
+
+      <div class="sidebar-search">
+        <input id="convSearchInput" type="search" placeholder="চ্যাট খুঁজুন..." autocomplete="off" />
+      </div>
+
+      <div id="conversationList" class="conversation-list"></div>
+
+      <div class="sidebar-footer">
+        <div id="sidebarProviderSummary" class="provider-summary-pill">
+          <span class="dot offline"></span>
+          <span>কোনো API যুক্ত নেই</span>
+        </div>
+        <div class="sidebar-footer-btns">
+          <button id="openSettingsBtn" class="btn-ghost-full">
+            <span>🔑</span> Free API Keys ও সেটিংস
+          </button>
+          <button id="openMobileBtn" class="btn-ghost-full" title="মোবাইল থেকে চালান">
+            <span>📱</span> মোবাইল কানেক্ট
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat Workspace -->
+    <main class="main-pane">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="sidebarToggleBtn" class="icon-btn" title="সাইডবার" aria-label="Toggle sidebar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
+
+          <!-- Model Picker -->
+          <div class="model-picker-wrap">
+            <button id="modelPickerBtn" class="model-picker-btn" aria-haspopup="listbox" aria-expanded="false">
+              <span id="modelPickerDot" class="model-dot auto"></span>
+              <span id="modelPickerLabel">✨ Auto (Smart Choose)</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="modelPickerMenu" class="model-picker-menu hidden" role="listbox"></div>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <button id="compareToggleBtn" class="pill-btn" title="একসাথে দুটি ফ্রি মডেলের উত্তর দেখুন">
+            <span>⚖️</span> <span class="hide-sm">Compare</span>
+          </button>
+          <button id="openVoiceBtn" class="pill-btn voice-cta" title="যেকোনো ভাষায় লাইভ ভয়েস কথা">
+            <span class="pulse-mic">🎙️</span> <span class="hide-sm">Live Voice</span>
+          </button>
+          <button id="themeToggleBtn" class="icon-btn" title="থিম পরিবর্তন (Dark / Light)">🌓</button>
+          <button id="topSettingsBtn" class="icon-btn" title="সেটিংস">⚙️</button>
+        </div>
+      </header>
+
+      <!-- Compare Mode Bar -->
+      <div id="compareBar" class="compare-bar hidden">
+        <div class="compare-select-group">
+          <label for="compareModelA">Model A</label>
+          <select id="compareModelA"></select>
+        </div>
+        <span class="compare-vs">VS</span>
+        <div class="compare-select-group">
+          <label for="compareModelB">Model B</label>
+          <select id="compareModelB"></select>
+        </div>
+      </div>
+
+      <!-- Chat Scroll Area -->
+      <section id="chatScroll" class="chat-scroll">
+        <div id="emptyState" class="empty-state">
+          <div class="hero-icon">
+            <img src="/static/icon.svg" alt="" width="56" height="56" />
+          </div>
+          <h1>FreeAI Hub</h1>
+          <p class="hero-sub">
+            কার্ড ছাড়াই সেরা সব ফ্রি AI মডেল এক জায়গায় — কমান্ড অনুযায়ী <strong>Auto-Choose</strong>, ৪২৯ অটো-ফলব্যাক এবং বাংলা সহ ৭০+ ভাষায় <strong>Live Voice</strong>।
+          </p>
+
+          <div id="onboardingBanner" class="onboarding-card hidden">
+            <div class="onboarding-text">
+              <strong>শুরু করতে কমপক্ষে একটি ফ্রি API key যোগ করুন</strong>
+              <span>Google AI Studio (Gemini), Groq অথবা OpenRouter (:free) — কোনো ক্রেডিট কার্ড লাগে না। পিসিতে Ollama থাকলে key ছাড়াই চলবে।</span>
+            </div>
+            <button id="onboardingConnectBtn" class="btn-primary">🔑 ফ্রি API যুক্ত করুন</button>
+          </div>
+
+          <div class="starter-grid">
+            <button class="starter-card" data-prompt="বাংলায় আমাকে বুঝিয়ে বলো REST API এবং WebSocket-এর মধ্যে মূল পার্থক্য কী?">
+              <span class="starter-tag">💬 বাংলা চ্যাট</span>
+              <span>REST API এবং WebSocket-এর মূল পার্থক্য সহজ বাংলায় বুঝিয়ে দাও</span>
+            </button>
+            <button class="starter-card" data-prompt="Write a clean Python FastAPI endpoint with async streaming and error handling.">
+              <span class="starter-tag">💻 Auto · Coding</span>
+              <span>Python FastAPI async streaming endpoint লিখে দাও</span>
+            </button>
+            <button class="starter-card" data-prompt="আজকে আমার কাজের জন্য একটি স্মার্ট ডেইলি রুটিন ও প্রোডাক্টিভিটি প্ল্যান বানিয়ে দাও।">
+              <span class="starter-tag">✨ Smart Auto</span>
+              <span>স্মার্ট ডেইলি রুটিন ও প্রোডাক্টিভিটি প্ল্যান তৈরি করো</span>
+            </button>
+            <button class="starter-card" data-action="voice">
+              <span class="starter-tag">🎙️ Live Voice</span>
+              <span>যেকোনো ভাষায় সরাসরি লাইভ ভয়েসে কথা বলা শুরু করুন</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="messagesContainer" class="messages-container"></div>
+      </section>
+
+      <!-- Composer -->
+      <footer class="composer-wrap">
+        <div id="attachmentStrip" class="attachment-strip hidden"></div>
+        <div class="composer-box">
+          <input id="fileInput" type="file" multiple class="hidden" accept="image/*,.txt,.md,.py,.js,.ts,.tsx,.jsx,.json,.csv,.html,.css,.sql,.log,.yaml,.yml,.xml" />
+          <button id="attachBtn" class="icon-btn composer-icon" title="ছবি বা টেক্সট ফাইল যুক্ত করুন">📎</button>
+          <textarea id="promptInput" rows="1" placeholder="যেকোনো প্রশ্ন লিখুন, কোড দিন, ছবি যুক্ত করুন বা ভয়েস চালু করুন..."></textarea>
+          <button id="composerVoiceBtn" class="icon-btn composer-icon" title="লাইভ ভয়েস কল">🎙️</button>
+          <button id="sendBtn" class="send-btn" title="পাঠান (Enter)">
+            <svg id="sendIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4Z"/></svg>
+            <span id="stopIcon" class="hidden">⏹</span>
+          </button>
+        </div>
+        <div class="composer-meta">
+          <span id="composerRouteHint">✨ Auto Mode · কমান্ড বুঝে সেরা ফ্রি মডেল ও 429 ফলব্যাক সক্রিয়</span>
+          <span class="hide-sm">Shift+Enter নতুন লাইন</span>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Settings & Free API Hub Modal -->
+  <div id="settingsModal" class="overlay hidden" aria-hidden="true">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2>সেটিংস ও ফ্রি API হাব</h2>
+        <button id="closeSettingsBtn" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-tabs">
+        <button class="tab-btn active" data-tab="providers">🔑 Free API Keys</button>
+        <button class="tab-btn" data-tab="preferences">⚙️ পছন্দ ও সিকিউরিটি</button>
+        <button class="tab-btn" data-tab="mobile">📱 মোবাইল অ্যাক্সেস</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="tabProviders" class="tab-pane active">
+          <div class="info-banner">
+            এখানে কোনো পেইড বিলিং বা কার্ডের অপশন নেই। যে প্রোভাইডারের ফ্রি API key দেবেন, সেটি সাথে সাথে টেস্ট হয়ে তার ফ্রি মডেলগুলো যুক্ত হবে।
+          </div>
+          <div id="providersList" class="providers-grid"></div>
+        </div>
+
+        <div id="tabPreferences" class="tab-pane">
+          <div class="form-group">
+            <label for="prefSystemPrompt">System Prompt (সকল চ্যাটের জন্য)</label>
+            <textarea id="prefSystemPrompt" rows="3"></textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="prefDefaultMode">ডিফল্ট মডেল মোড</label>
+              <select id="prefDefaultMode">
+                <option value="auto">Auto (কমান্ড বুঝে অটো-সিলেক্ট)</option>
+                <option value="manual">Manual (নির্বাচিত মডেল)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prefAutoFallback">429 রেট-লিমিটে অটো-ফলব্যাক</label>
+              <select id="prefAutoFallback">
+                <option value="true">চালু (অটোমেটিক অন্য ফ্রি মডেলে যাবে)</option>
+                <option value="false">বন্ধ</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="prefVoiceEngine">ডিফল্ট Live Voice ইঞ্জিন</label>
+              <select id="prefVoiceEngine">
+                <option value="auto">Auto (Gemini 3.8 Live → Universal Fallback)</option>
+                <option value="gemini_live">Gemini 3.8 Live (Native Audio)</option>
+                <option value="universal">Universal Free Voice (Whisper + Edge-TTS)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prefVoiceLang">ডিফল্ট ভয়েস ভাষা</label>
+              <select id="prefVoiceLang">
+                <option value="auto">Auto-Detect (বাংলা / English / যেকোনো ভাষা)</option>
+                <option value="bn">বাংলা (Bengali)</option>
+                <option value="en">English</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+                <option value="ar">العربية (Arabic)</option>
+                <option value="ur">اردو (Urdu)</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="ja">日本語</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prefVoiceGender">Universal TTS কণ্ঠস্বর</label>
+              <select id="prefVoiceGender">
+                <option value="female">Female (Nabanita / Aria)</option>
+                <option value="male">Male (Pradeep / Guy)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="pin-setting-box">
+            <div>
+              <strong>মোবাইল ও নেটওয়ার্ক PIN লক (ঐচ্ছিক)</strong>
+              <p id="prefPinStatus" class="muted-small">বর্তমানে কোনো PIN সেট করা নেই। অন্য ডিভাইস থেকে নিরাপদ রাখতে চাইলে PIN দিতে পারেন।</p>
+            </div>
+            <div class="pin-setting-controls">
+              <input id="prefNewPin" type="password" inputmode="numeric" placeholder="নতুন PIN লিখুন..." />
+              <button id="savePinBtn" type="button" class="btn-secondary">PIN সেট</button>
+              <button id="clearPinBtn" type="button" class="btn-danger-outline hidden">PIN মুছুন</button>
+            </div>
+          </div>
+
+          <div class="prefs-footer">
+            <button id="savePrefsBtn" class="btn-primary">সেটিংস সেভ করুন</button>
+          </div>
+        </div>
+
+        <div id="tabMobile" class="tab-pane">
+          <div class="mobile-guide-card">
+            <h3>১. একই Wi-Fi থেকে মোবাইল ব্যবহার</h3>
+            <p>উইন্ডোজ পিসিতে অ্যাপ চালু থাকলে আপনার ফোন থেকে একই Wi-Fi-এ নিচের ঠিকানায় যান:</p>
+            <div id="lanUrlsList" class="lan-urls"></div>
+            <p class="muted-small">মোবাইল ব্রাউজারে ওপেন করে <strong>Add to Home Screen / Install App</strong> চাপলে অ্যাপ হিসেবে ইন্সটল হয়ে যাবে।</p>
+          </div>
+
+          <div class="mobile-guide-card">
+            <h3>২. যেকোনো জায়গা থেকে + মোবাইলে Live Voice Mic (HTTPS)</h3>
+            <p>মোবাইল ব্রাউজারে মাইক্রোফোন ব্যবহার করতে নিরাপদ <strong>HTTPS</strong> দরকার হয়, আর বাইরে থেকে চালাতেও টানেল লাগে। প্রজেক্ট ফোল্ডারে থাকা <code>start_mobile_tunnel.bat</code> ডাবল-ক্লিক করলে ফ্রি Cloudflare Quick Tunnel (<code>https://...trycloudflare.com</code>) তৈরি হবে।</p>
+            <p class="muted-small">রিমোট টানেল চালানোর আগে উপরের "পছন্দ ও সিকিউরিটি" ট্যাবে একটি PIN সেট করে নেওয়ার পরামর্শ দেওয়া হলো।</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Streaming Multilingual Voice Overlay -->
+  <div id="voiceOverlay" class="voice-overlay hidden" aria-hidden="true">
+    <div class="voice-topbar">
+      <div class="voice-badges">
+        <span id="voiceEngineBadge" class="voice-pill">Auto Voice</span>
+        <span id="voiceActiveModelBadge" class="voice-pill subtle">Connecting...</span>
+      </div>
+      <div class="voice-selectors">
+        <select id="voiceEngineSelect" title="Voice Engine">
+          <option value="auto">Auto Engine</option>
+          <option value="gemini_live">Gemini 3.8 Live</option>
+          <option value="universal">Universal Free Voice</option>
+        </select>
+        <select id="voiceLangSelect" title="Language">
+          <option value="auto">Auto Language</option>
+          <option value="bn">বাংলা</option>
+          <option value="en">English</option>
+          <option value="hi">हिन्दी</option>
+          <option value="ar">العربية</option>
+          <option value="ur">اردو</option>
+          <option value="es">Español</option>
+          <option value="fr">Français</option>
+        </select>
+        <select id="voiceGenderSelect" title="Voice">
+          <option value="female">Female</option>
+          <option value="male">Male</option>
+        </select>
+        <button id="closeVoiceBtn" class="icon-btn" title="বন্ধ করুন">✕</button>
+      </div>
+    </div>
+
+    <div class="voice-stage">
+      <div id="voiceOrb" class="voice-orb idle">
+        <div class="orb-ring"></div>
+        <div class="orb-core">🎙️</div>
+      </div>
+      <div id="voiceStateText" class="voice-state-text">কানেক্ট হচ্ছে...</div>
+      <div id="voiceSubState" class="voice-sub-state">যেকোনো ভাষায় (বাংলা, ইংরেজি ইত্যাদি) কথা বলুন</div>
+
+      <div id="voiceMicNotice" class="voice-notice hidden"></div>
+
+      <div id="voiceTranscriptBox" class="voice-transcript-box"></div>
+    </div>
+
+    <div class="voice-controls">
+      <div class="voice-btn-row">
+        <button id="voiceVadModeBtn" class="pill-btn">Hands-Free (Auto)</button>
+        <button id="voiceMainBtn" class="voice-main-btn">🎙️ কথা বলুন</button>
+        <button id="voiceInterruptBtn" class="pill-btn hidden">✋ থামান</button>
+        <button id="voiceEndBtn" class="btn-danger-outline">কল শেষ</button>
+      </div>
+      <form id="voiceTextForm" class="voice-text-form">
+        <input id="voiceTextInput" type="text" placeholder="মাইক ছাড়াও এখানে লিখে সরাসরি ভয়েস উত্তর শুনতে পারেন..." autocomplete="off" />
+        <button type="submit" class="btn-secondary">পাঠান</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script defer src="/static/app.js?v=2"></script>
+  <script defer src="/static/voice.js?v=2"></script>
+</body>
+</html>
