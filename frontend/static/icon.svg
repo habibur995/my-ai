@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
   <defs>
-    <linearGradient id="g1" x1="12" y1="12" x2="116" y2="116" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="55%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#22d3ee"/>
+    <linearGradient id="geminiSparkle" x1="18" y1="18" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4285f4"/>
+      <stop offset="52%" stop-color="#9b72cb"/>
+      <stop offset="100%" stop-color="#d96570"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="28" fill="#0f172a"/>
-  <rect x="10" y="10" width="108" height="108" rx="26" stroke="url(#g1)" stroke-width="4" opacity="0.9"/>
-  <path d="M64 26L73.5 54.5L102 64L73.5 73.5L64 102L54.5 73.5L26 64L54.5 54.5L64 26Z" fill="url(#g1)"/>
-  <circle cx="64" cy="64" r="9" fill="#0f172a"/>
+  <path
+    d="M64 10C66.8 39.2 88.8 61.2 118 64C88.8 66.8 66.8 88.8 64 118C61.2 88.8 39.2 66.8 10 64C39.2 61.2 61.2 39.2 64 10Z"
+    fill="url(#geminiSparkle)"
+  />
 </svg>

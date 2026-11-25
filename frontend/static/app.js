@@ -199,6 +199,10 @@
   function applyTheme(theme) {
     const t = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', t);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', t === 'light' ? '#ffffff' : '#131314');
+    }
     state.settings.theme = t;
   }
 
@@ -219,17 +223,17 @@
     if (state.mode === 'auto' || !state.selectedModel) {
       els.modelPickerDot.className = 'model-dot auto';
       els.modelPickerDot.style.background = '';
-      els.modelPickerLabel.textContent = '✨ Auto (Smart Choose)';
-      els.composerRouteHint.textContent = '✨ Auto Mode · কমান্ড বুঝে সেরা ফ্রি মডেল ও 429 ফলব্যাক সক্রিয়';
+      els.modelPickerLabel.textContent = 'Auto (Smart Choose)';
+      els.composerRouteHint.textContent = 'Auto · কমান্ড অনুযায়ী সেরা ফ্রি মডেল';
     } else {
       const prov = findProvider(state.selectedProvider);
       const found = items.find(
         (x) => x.provider.id === state.selectedProvider && x.model.id === state.selectedModel
       );
       els.modelPickerDot.className = 'model-dot';
-      els.modelPickerDot.style.background = prov ? prov.color : '#6366f1';
+      els.modelPickerDot.style.background = prov ? prov.color : '#8ab4f8';
       els.modelPickerLabel.textContent = found ? found.model.label : state.selectedModel;
-      els.composerRouteHint.textContent = `Manual: ${prov?.name || state.selectedProvider} · 429 হলে অটো-ফলব্যাক ${state.settings.auto_fallback !== 'false' ? 'চালু' : 'বন্ধ'}`;
+      els.composerRouteHint.textContent = `${prov?.name || state.selectedProvider} · Fallback ${state.settings.auto_fallback !== 'false' ? 'ON' : 'OFF'}`;
     }
 
     const menu = els.modelPickerMenu;
@@ -523,12 +527,26 @@
         bubble.appendChild(txt);
         row.appendChild(bubble);
       } else {
+        const shell = document.createElement('div');
+        shell.className = 'assistant-shell';
+
+        const avatar = document.createElement('div');
+        avatar.className = 'assistant-avatar';
+        avatar.innerHTML = `<img src="/static/icon.svg" alt="" width="22" height="22" />`;
+
+        const body = document.createElement('div');
+        body.className = 'assistant-body';
+
         const bubble = document.createElement('div');
         bubble.className = 'msg-bubble assistant';
         bubble.innerHTML = renderMarkdown(msg.content || '');
         enhanceCodeBlocks(bubble);
-        row.appendChild(bubble);
-        row.appendChild(createAssistantFooter(msg, idx === lastAssistantIdx));
+
+        body.appendChild(bubble);
+        body.appendChild(createAssistantFooter(msg, idx === lastAssistantIdx));
+        shell.appendChild(avatar);
+        shell.appendChild(body);
+        row.appendChild(shell);
       }
       container.appendChild(row);
     });
@@ -592,7 +610,9 @@
 
     const lastBubble = els.messagesContainer.lastElementChild?.querySelector('.msg-bubble.assistant');
     const lastFooter = els.messagesContainer.lastElementChild?.querySelector('.msg-footer');
+    const lastAvatar = els.messagesContainer.lastElementChild?.querySelector('.assistant-avatar');
     if (lastBubble) lastBubble.classList.add('typing-cursor');
+    if (lastAvatar) lastAvatar.classList.add('streaming');
 
     const controller = new AbortController();
     state.streamingAbort = controller;
@@ -684,6 +704,7 @@
       }
     } finally {
       if (lastBubble) lastBubble.classList.remove('typing-cursor');
+      if (lastAvatar) lastAvatar.classList.remove('streaming');
       state.streamingAbort = null;
       setStreamingUi(false);
       renderMessages();
