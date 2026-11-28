@@ -201,7 +201,7 @@
     document.documentElement.setAttribute('data-theme', t);
     const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
-      metaTheme.setAttribute('content', t === 'light' ? '#ffffff' : '#131314');
+      metaTheme.setAttribute('content', t === 'light' ? '#fafbfd' : '#0e0f12');
     }
     state.settings.theme = t;
   }

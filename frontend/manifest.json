@@ -4,8 +4,8 @@
   "description": "100% Free-API Multi-Model AI Chat, Smart Auto-Routing & Multilingual Live Voice",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#131314",
-  "theme_color": "#131314",
+  "background_color": "#0e0f12",
+  "theme_color": "#0e0f12",
   "orientation": "any",
   "icons": [
     {
