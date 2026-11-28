@@ -1,20 +1,35 @@
 (() => {
   'use strict';
 
+  const BACKUP_KEY = 'freeai_hub_backup_v1';
+  const PIN_STORAGE_KEY = 'freeai_pin';
+
+  const AUTO_COMMANDS = [
+    { id: '', label: '✨ Auto (Smart Choose)', desc: 'প্রম্পট বুঝে সেরা ফ্রি মডেল বেছে নেবে', pill: 'Auto · কমান্ড অনুযায়ী সেরা ফ্রি মডেল' },
+    { id: 'multilingual', label: '💬 বাংলা / Multilingual', desc: 'বাংলা ও বহুভাষিক উত্তরের সেরা মডেল', pill: 'Auto · বাংলা / Multilingual' },
+    { id: 'coding', label: '💻 Coding & Debug', desc: 'কোডিং, বাগ ফিক্স ও আর্কিটেকচারের সেরা মডেল', pill: 'Auto · Coding & Debug' },
+    { id: 'long_context', label: '📚 Long Context / Deep', desc: 'বড় ফাইল, ডকুমেন্ট ও গভীর বিশ্লেষণের মডেল', pill: 'Auto · Long Context' },
+    { id: 'fast', label: '⚡ Ultra-Fast', desc: 'সবচেয়ে দ্রুতগতির ইনস্ট্যান্ট ফ্রি মডেল', pill: 'Auto · Ultra-Fast' },
+  ];
+
   const state = {
-    pin: sessionStorage.getItem('freeai_pin') || '',
+    pin: localStorage.getItem(PIN_STORAGE_KEY) || sessionStorage.getItem(PIN_STORAGE_KEY) || '',
     settings: {},
     providers: [],
     conversations: [],
+    memories: [],
     activeConvId: '',
     messages: [],
+    messagesCache: {},
     mode: 'auto', // 'auto' | 'manual'
+    autoHint: '',
     selectedProvider: '',
     selectedModel: '',
     compareMode: false,
     attachments: [],
     streamingAbort: null,
     speakingAudio: null,
+    speakingBtn: null,
     network: { port: 8000, lan_ips: [] },
   };
 
@@ -33,6 +48,8 @@
     convSearchInput: $('convSearchInput'),
     conversationList: $('conversationList'),
     sidebarProviderSummary: $('sidebarProviderSummary'),
+    openMemoryBtn: $('openMemoryBtn'),
+    sidebarMemoryLabel: $('sidebarMemoryLabel'),
     openSettingsBtn: $('openSettingsBtn'),
     openMobileBtn: $('openMobileBtn'),
     topSettingsBtn: $('topSettingsBtn'),
@@ -60,9 +77,16 @@
     sendIcon: $('sendIcon'),
     stopIcon: $('stopIcon'),
     composerRouteHint: $('composerRouteHint'),
+    composerRouteLabel: $('composerRouteLabel'),
+    autoCommandMenu: $('autoCommandMenu'),
     settingsModal: $('settingsModal'),
     closeSettingsBtn: $('closeSettingsBtn'),
     providersList: $('providersList'),
+    prefMemoryEnabled: $('prefMemoryEnabled'),
+    clearMemoriesBtn: $('clearMemoriesBtn'),
+    memoryAddForm: $('memoryAddForm'),
+    memoryAddInput: $('memoryAddInput'),
+    memoryList: $('memoryList'),
     prefSystemPrompt: $('prefSystemPrompt'),
     prefDefaultMode: $('prefDefaultMode'),
     prefAutoFallback: $('prefAutoFallback'),
@@ -77,6 +101,74 @@
     lanUrlsList: $('lanUrlsList'),
     toastContainer: $('toastContainer'),
   };
+
+  function readLocalBackup() {
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function trimMsgForBackup(m) {
+    const safeAtts = Array.isArray(m.attachments)
+      ? m.attachments.map((a) => ({
+          name: a?.name || 'file',
+          mime_type: a?.mime_type || 'application/octet-stream',
+        }))
+      : [];
+    return {
+      id: m.id || '',
+      conversation_id: m.conversation_id || '',
+      role: m.role || 'user',
+      content: String(m.content || ''),
+      attachments: safeAtts,
+      provider_id: m.provider_id || '',
+      model_id: m.model_id || '',
+      route_reason: m.route_reason || '',
+      created_at: m.created_at || '',
+    };
+  }
+
+  function saveLocalBackup() {
+    try {
+      if (state.activeConvId && state.messages.length) {
+        state.messagesCache[state.activeConvId] = state.messages
+          .filter((m) => m && (m.content || (m.attachments && m.attachments.length)))
+          .slice(-120)
+          .map(trimMsgForBackup);
+      }
+      const validIds = new Set(state.conversations.map((c) => c.id));
+      const trimmedMsgs = {};
+      for (const c of state.conversations.slice(0, 45)) {
+        if (state.messagesCache[c.id]) {
+          trimmedMsgs[c.id] = state.messagesCache[c.id];
+        }
+      }
+      for (const key of Object.keys(state.messagesCache)) {
+        if (!validIds.has(key)) delete state.messagesCache[key];
+      }
+      const payload = {
+        v: 1,
+        updatedAt: Date.now(),
+        activeConvId: state.activeConvId,
+        mode: state.mode,
+        autoHint: state.autoHint,
+        selectedProvider: state.selectedProvider,
+        selectedModel: state.selectedModel,
+        theme: state.settings.theme || 'dark',
+        conversations: state.conversations.slice(0, 45),
+        messagesByConv: trimmedMsgs,
+        memories: state.memories.slice(0, 60),
+      };
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore quota errors gracefully
+    }
+  }
 
   function toast(message, kind = 'info') {
     const div = document.createElement('div');
@@ -162,7 +254,8 @@
     const resp = await fetch(url, { ...options, headers });
     if (resp.status === 401) {
       state.pin = '';
-      sessionStorage.removeItem('freeai_pin');
+      localStorage.removeItem(PIN_STORAGE_KEY);
+      sessionStorage.removeItem(PIN_STORAGE_KEY);
       showPinOverlay();
       throw new Error('PIN required');
     }
@@ -218,13 +311,77 @@
     }
   }
 
+  function renderAutoCommandMenu() {
+    const menu = els.autoCommandMenu;
+    if (!menu) return;
+    menu.innerHTML = '';
+
+    for (const cmd of AUTO_COMMANDS) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      const isSel = state.mode === 'auto' && state.autoHint === cmd.id;
+      btn.className = `auto-cmd-opt ${isSel ? 'selected' : ''}`;
+      btn.innerHTML = `
+        <div>
+          <div>${escapeHtml(cmd.label)}</div>
+          <span class="auto-cmd-sub">${escapeHtml(cmd.desc)}</span>
+        </div>
+        ${isSel ? '<span>✓</span>' : ''}
+      `;
+      btn.addEventListener('click', () => {
+        state.mode = 'auto';
+        state.autoHint = cmd.id;
+        state.selectedProvider = '';
+        state.selectedModel = '';
+        closeAutoCommandMenu();
+        renderModelPicker();
+        saveLocalBackup();
+        toast(`সিলেক্ট করা হয়েছে: ${cmd.label}`, 'info');
+      });
+      menu.appendChild(btn);
+    }
+
+    const divider = document.createElement('div');
+    divider.className = 'auto-cmd-divider';
+    menu.appendChild(divider);
+
+    const pickModelBtn = document.createElement('button');
+    pickModelBtn.type = 'button';
+    pickModelBtn.className = 'auto-cmd-opt';
+    pickModelBtn.innerHTML = `
+      <div>
+        <div>🎛️ নির্দিষ্ট ফ্রি মডেল বেছে নিন...</div>
+        <span class="auto-cmd-sub">উপরের মডেল মেনু থেকে ম্যানুয়ালি সিলেক্ট করুন</span>
+      </div>
+      <span>↗</span>
+    `;
+    pickModelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAutoCommandMenu();
+      els.modelPickerMenu.classList.remove('hidden');
+      els.modelPickerBtn.setAttribute('aria-expanded', 'true');
+    });
+    menu.appendChild(pickModelBtn);
+  }
+
+  function closeAutoCommandMenu() {
+    if (!els.autoCommandMenu) return;
+    els.autoCommandMenu.classList.add('hidden');
+    els.composerRouteHint?.setAttribute('aria-expanded', 'false');
+  }
+
   function renderModelPicker() {
     const items = getConnectedModelsFlat();
+    const activeAutoCmd = AUTO_COMMANDS.find((c) => c.id === state.autoHint) || AUTO_COMMANDS[0];
+
     if (state.mode === 'auto' || !state.selectedModel) {
       els.modelPickerDot.className = 'model-dot auto';
       els.modelPickerDot.style.background = '';
-      els.modelPickerLabel.textContent = 'Auto (Smart Choose)';
-      els.composerRouteHint.textContent = 'Auto · কমান্ড অনুযায়ী সেরা ফ্রি মডেল';
+      els.modelPickerLabel.textContent = state.autoHint ? activeAutoCmd.label.replace(/^[^\w\u0980-\u09FF]+\s*/, '') : 'Auto (Smart Choose)';
+      if (els.composerRouteLabel) {
+        els.composerRouteLabel.textContent = activeAutoCmd.pill;
+      }
+      els.composerRouteHint?.classList.toggle('active-cmd', Boolean(state.autoHint));
     } else {
       const prov = findProvider(state.selectedProvider);
       const found = items.find(
@@ -233,8 +390,13 @@
       els.modelPickerDot.className = 'model-dot';
       els.modelPickerDot.style.background = prov ? prov.color : '#8ab4f8';
       els.modelPickerLabel.textContent = found ? found.model.label : state.selectedModel;
-      els.composerRouteHint.textContent = `${prov?.name || state.selectedProvider} · Fallback ${state.settings.auto_fallback !== 'false' ? 'ON' : 'OFF'}`;
+      if (els.composerRouteLabel) {
+        els.composerRouteLabel.textContent = `${prov?.badge || state.selectedProvider} · ${found ? found.model.label : state.selectedModel}`;
+      }
+      els.composerRouteHint?.classList.add('active-cmd');
     }
+
+    renderAutoCommandMenu();
 
     const menu = els.modelPickerMenu;
     menu.innerHTML = '';
@@ -251,10 +413,13 @@
     `;
     autoBtn.addEventListener('click', () => {
       state.mode = 'auto';
+      state.autoHint = '';
       state.selectedProvider = '';
       state.selectedModel = '';
       menu.classList.add('hidden');
+      els.modelPickerBtn.setAttribute('aria-expanded', 'false');
       renderModelPicker();
+      saveLocalBackup();
     });
     menu.appendChild(autoBtn);
 
@@ -290,7 +455,9 @@
             state.selectedProvider = p.id;
             state.selectedModel = m.id;
             menu.classList.add('hidden');
+            els.modelPickerBtn.setAttribute('aria-expanded', 'false');
             renderModelPicker();
+            saveLocalBackup();
           });
           menu.appendChild(btn);
         }
@@ -377,14 +544,26 @@
     const resp = await apiFetch(url);
     state.conversations = await resp.json();
     renderConversations();
+    if (!query) saveLocalBackup();
   }
 
   async function loadConversation(convId) {
     state.activeConvId = convId;
     const resp = await apiFetch(`/api/conversations/${convId}/messages`);
-    state.messages = await resp.json();
+    if (!resp.ok) {
+      if (state.messagesCache[convId]) {
+        state.messages = state.messagesCache[convId];
+      } else {
+        state.activeConvId = '';
+        state.messages = [];
+      }
+    } else {
+      state.messages = await resp.json();
+      state.messagesCache[convId] = state.messages.map(trimMsgForBackup);
+    }
     renderMessages();
     renderConversations();
+    saveLocalBackup();
   }
 
   function startNewChat() {
@@ -392,6 +571,7 @@
     state.messages = [];
     renderMessages();
     renderConversations();
+    saveLocalBackup();
     els.promptInput.focus();
   }
 
@@ -443,11 +623,13 @@
   }
 
   async function speakText(text, btn) {
+    const prevBtn = state.speakingBtn;
     if (state.speakingAudio) {
       state.speakingAudio.pause();
       state.speakingAudio = null;
-      btn.textContent = '🔊 শুনুন';
-      return;
+      state.speakingBtn = null;
+      if (prevBtn) prevBtn.textContent = '🔊 শুনুন';
+      if (prevBtn === btn) return;
     }
     const orig = btn.textContent;
     btn.textContent = '⏳...';
@@ -466,14 +648,17 @@
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       state.speakingAudio = audio;
+      state.speakingBtn = btn;
       btn.textContent = '⏹ থামান';
       audio.onended = () => {
         URL.revokeObjectURL(url);
         state.speakingAudio = null;
+        state.speakingBtn = null;
         btn.textContent = orig;
       };
       await audio.play();
     } catch (err) {
+      state.speakingBtn = null;
       btn.textContent = orig;
       toast(`অডিও প্লে সমস্যা: ${err.message}`, 'error');
     }
@@ -609,7 +794,7 @@
     renderMessages();
 
     const lastBubble = els.messagesContainer.lastElementChild?.querySelector('.msg-bubble.assistant');
-    const lastFooter = els.messagesContainer.lastElementChild?.querySelector('.msg-footer');
+    let lastFooter = els.messagesContainer.lastElementChild?.querySelector('.msg-footer');
     const lastAvatar = els.messagesContainer.lastElementChild?.querySelector('.assistant-avatar');
     if (lastBubble) lastBubble.classList.add('typing-cursor');
     if (lastAvatar) lastAvatar.classList.add('streaming');
@@ -617,6 +802,15 @@
     const controller = new AbortController();
     state.streamingAbort = controller;
     setStreamingUi(true);
+
+    let rafPending = false;
+    const flushStreamRender = () => {
+      rafPending = false;
+      if (lastBubble) {
+        lastBubble.innerHTML = renderMarkdown(assistantDraft.content);
+      }
+      els.chatScroll.scrollTop = els.chatScroll.scrollHeight;
+    };
 
     try {
       const resp = await apiFetch('/api/chat/stream', {
@@ -628,6 +822,7 @@
           prompt: promptText,
           attachments: attachmentsToSend,
           mode: state.mode,
+          auto_hint: state.autoHint,
           provider_id: state.selectedProvider,
           model_id: state.selectedModel,
           regenerate,
@@ -665,6 +860,9 @@
           if (ev.type === 'conversation' && ev.conversation) {
             state.activeConvId = ev.conversation.id;
             refreshConversations(els.convSearchInput.value.trim());
+          } else if (ev.type === 'memory_saved' && Array.isArray(ev.memories) && ev.memories.length) {
+            reloadMemories();
+            toast(`🧠 মেমোরিতে সংরক্ষণ হয়েছে: ${ev.memories[0].content.slice(0, 60)}`, 'success');
           } else if (ev.type === 'meta') {
             assistantDraft.provider_id = ev.provider_id;
             assistantDraft.model_id = ev.model_id;
@@ -673,15 +871,16 @@
               toast(`রেট লিমিট বা সমস্যার কারণে অটো-ফলব্যাক: ${ev.model_label}`, 'info');
             }
             if (lastFooter) {
-              lastFooter.replaceWith(createAssistantFooter(assistantDraft, true));
+              const nextFooter = createAssistantFooter(assistantDraft, true);
+              lastFooter.replaceWith(nextFooter);
+              lastFooter = nextFooter;
             }
           } else if (ev.type === 'delta') {
             assistantDraft.content += ev.text;
-            if (lastBubble) {
-              lastBubble.innerHTML = renderMarkdown(assistantDraft.content);
-              enhanceCodeBlocks(lastBubble);
+            if (!rafPending) {
+              rafPending = true;
+              requestAnimationFrame(flushStreamRender);
             }
-            els.chatScroll.scrollTop = els.chatScroll.scrollHeight;
           } else if (ev.type === 'error') {
             assistantDraft.content = `⚠️ ${ev.message}`;
             if (lastBubble) {
@@ -708,6 +907,7 @@
       state.streamingAbort = null;
       setStreamingUi(false);
       renderMessages();
+      saveLocalBackup();
       refreshConversations(els.convSearchInput.value.trim());
     }
   }
@@ -768,6 +968,10 @@
           slot_b: { provider_id: pidB, model_id: midB },
         }),
       });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${resp.status}`);
+      }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
@@ -1018,6 +1222,51 @@
     renderProvidersSettings();
   }
 
+  function renderMemoryTab() {
+    if (els.prefMemoryEnabled) {
+      els.prefMemoryEnabled.checked = state.settings.memory_enabled !== 'false';
+    }
+    if (els.sidebarMemoryLabel) {
+      const count = state.memories.length;
+      els.sidebarMemoryLabel.textContent = count > 0 ? `ব্যাকগ্রাউন্ড মেমোরি (${count})` : 'ব্যাকগ্রাউন্ড মেমোরি';
+    }
+    const list = els.memoryList;
+    if (!list) return;
+    list.innerHTML = '';
+    if (!state.memories.length) {
+      list.innerHTML = `<div class="muted-small" style="padding: 12px 4px;">এখনো কোনো মেমোরি সেভ হয়নি। চ্যাটে বলুন "মনে রাখো আমার নাম..." অথবা উপরে লিখে যোগ করুন।</div>`;
+      return;
+    }
+    for (const m of state.memories) {
+      const item = document.createElement('div');
+      item.className = 'memory-item';
+      item.innerHTML = `
+        <div class="memory-item-body">
+          <span class="memory-cat-badge">${escapeHtml(m.category || 'general')}</span>
+          <div>${escapeHtml(m.content)}</div>
+        </div>
+        <button type="button" class="icon-btn mem-del-btn" title="মুছুন" aria-label="Delete memory">🗑</button>
+      `;
+      item.querySelector('.mem-del-btn').addEventListener('click', async () => {
+        await apiFetch(`/api/memories/${m.id}`, { method: 'DELETE' });
+        await reloadMemories();
+        toast('মেমোরি মুছে ফেলা হয়েছে।', 'info');
+      });
+      list.appendChild(item);
+    }
+  }
+
+  async function reloadMemories() {
+    try {
+      const resp = await apiFetch('/api/memories');
+      if (resp.ok) {
+        state.memories = await resp.json();
+        renderMemoryTab();
+        saveLocalBackup();
+      }
+    } catch {}
+  }
+
   function openSettings(tabName = 'providers') {
     els.settingsModal.classList.remove('hidden');
     els.settingsModal.setAttribute('aria-hidden', 'false');
@@ -1025,8 +1274,10 @@
       b.classList.toggle('active', b.dataset.tab === tabName);
     });
     document.getElementById('tabProviders').classList.toggle('active', tabName === 'providers');
+    document.getElementById('tabMemory')?.classList.toggle('active', tabName === 'memory');
     document.getElementById('tabPreferences').classList.toggle('active', tabName === 'preferences');
     document.getElementById('tabMobile').classList.toggle('active', tabName === 'mobile');
+    if (tabName === 'memory') renderMemoryTab();
   }
 
   function closeSettings() {
@@ -1052,17 +1303,76 @@
       state.settings = data.settings || {};
       state.providers = data.providers || [];
       state.conversations = data.conversations || [];
+      state.memories = data.memories || [];
       state.network = data.network || { port: 8000, lan_ips: [] };
-      state.mode = state.settings.default_mode || 'auto';
+
+      // Check local browser backup & seamlessly restore if server restarted (ephemeral disk)
+      const backup = readLocalBackup();
+      if (backup) {
+        if (backup.messagesByConv && typeof backup.messagesByConv === 'object') {
+          state.messagesCache = { ...backup.messagesByConv };
+        }
+        const serverConvIds = new Set(state.conversations.map((c) => c.id));
+        const serverMemSet = new Set(state.memories.map((m) => String(m.content || '').toLowerCase()));
+        const missingConvs = (backup.conversations || []).filter((c) => c?.id && !serverConvIds.has(c.id));
+        const missingMems = (backup.memories || []).filter(
+          (m) => m?.content && !serverMemSet.has(String(m.content).toLowerCase())
+        );
+
+        if (missingConvs.length > 0 || missingMems.length > 0) {
+          try {
+            const syncResp = await apiFetch('/api/sync/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                conversations: missingConvs,
+                messages_by_conv: backup.messagesByConv || {},
+                memories: missingMems,
+              }),
+            });
+            if (syncResp.ok) {
+              const synced = await syncResp.json();
+              state.conversations = synced.conversations || state.conversations;
+              state.memories = synced.memories || state.memories;
+              const rCount = (synced.restored?.conversations || 0) + (synced.restored?.memories || 0);
+              if (rCount > 0) {
+                toast(`ব্যাকগ্রাউন্ড মেমোরি থেকে ${synced.restored.conversations}টি চ্যাট ও ${synced.restored.memories}টি মেমোরি পুনরুদ্ধার হয়েছে।`, 'success');
+              }
+            }
+          } catch {}
+        }
+
+        // Restore user's chosen mode, auto command, model, and theme
+        state.mode = backup.mode || state.settings.default_mode || 'auto';
+        state.autoHint = backup.autoHint || '';
+        state.selectedProvider = backup.selectedProvider || '';
+        state.selectedModel = backup.selectedModel || '';
+        if (backup.theme && backup.theme !== state.settings.theme) {
+          state.settings.theme = backup.theme;
+        }
+      } else {
+        state.mode = state.settings.default_mode || 'auto';
+      }
 
       applyTheme(state.settings.theme || 'dark');
       updateProviderSummary();
       renderModelPicker();
       renderConversations();
       renderProvidersSettings();
+      renderMemoryTab();
       renderPreferencesTab();
       renderMobileTab();
-      renderMessages();
+
+      // Reopen last active conversation automatically instead of dropping user to blank screen
+      const targetConvId = backup?.activeConvId && state.conversations.some((c) => c.id === backup.activeConvId)
+        ? backup.activeConvId
+        : '';
+      if (targetConvId) {
+        await loadConversation(targetConvId);
+      } else {
+        renderMessages();
+      }
+      saveLocalBackup();
 
       if (window.FreeAIHubVoice && typeof window.FreeAIHubVoice.syncSettings === 'function') {
         window.FreeAIHubVoice.syncSettings(state.settings);
@@ -1089,7 +1399,8 @@
         return;
       }
       state.pin = pinVal;
-      sessionStorage.setItem('freeai_pin', pinVal);
+      localStorage.setItem(PIN_STORAGE_KEY, pinVal);
+      sessionStorage.setItem(PIN_STORAGE_KEY, pinVal);
       els.pinInput.value = '';
       hidePinOverlay();
       await bootstrap();
@@ -1121,11 +1432,34 @@
 
     els.modelPickerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      closeAutoCommandMenu();
+      const willOpen = els.modelPickerMenu.classList.contains('hidden');
       els.modelPickerMenu.classList.toggle('hidden');
+      els.modelPickerBtn.setAttribute('aria-expanded', String(willOpen));
     });
-    document.addEventListener('click', (e) => {
-      if (!els.modelPickerMenu.contains(e.target) && e.target !== els.modelPickerBtn) {
+
+    if (els.composerRouteHint) {
+      els.composerRouteHint.addEventListener('click', (e) => {
+        e.stopPropagation();
         els.modelPickerMenu.classList.add('hidden');
+        els.modelPickerBtn.setAttribute('aria-expanded', 'false');
+        const willOpen = els.autoCommandMenu.classList.contains('hidden');
+        els.autoCommandMenu.classList.toggle('hidden');
+        els.composerRouteHint.setAttribute('aria-expanded', String(willOpen));
+      });
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!els.modelPickerMenu.contains(e.target) && !els.modelPickerBtn.contains(e.target)) {
+        els.modelPickerMenu.classList.add('hidden');
+        els.modelPickerBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (
+        els.autoCommandMenu &&
+        !els.autoCommandMenu.contains(e.target) &&
+        !els.composerRouteHint.contains(e.target)
+      ) {
+        closeAutoCommandMenu();
       }
     });
 
@@ -1138,6 +1472,7 @@
     els.themeToggleBtn.addEventListener('click', async () => {
       const next = state.settings.theme === 'light' ? 'dark' : 'light';
       applyTheme(next);
+      saveLocalBackup();
       await apiFetch('/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1145,6 +1480,12 @@
       });
     });
 
+    if (els.openMemoryBtn) {
+      els.openMemoryBtn.addEventListener('click', () => {
+        closeMobileSidebar();
+        openSettings('memory');
+      });
+    }
     els.openSettingsBtn.addEventListener('click', () => {
       closeMobileSidebar();
       openSettings('providers');
@@ -1164,6 +1505,47 @@
       btn.addEventListener('click', () => openSettings(btn.dataset.tab));
     });
 
+    if (els.prefMemoryEnabled) {
+      els.prefMemoryEnabled.addEventListener('change', async () => {
+        const enabled = els.prefMemoryEnabled.checked;
+        const resp = await apiFetch('/api/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memory_enabled: enabled }),
+        });
+        state.settings = await resp.json();
+        toast(enabled ? 'ব্যাকগ্রাউন্ড মেমোরি চালু হয়েছে।' : 'ব্যাকগ্রাউন্ড মেমোরি বন্ধ করা হয়েছে।', 'info');
+      });
+    }
+
+    if (els.memoryAddForm) {
+      els.memoryAddForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const val = els.memoryAddInput.value.trim();
+        if (!val) return;
+        const resp = await apiFetch('/api/memories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: val, category: 'manual' }),
+        });
+        if (resp.ok) {
+          els.memoryAddInput.value = '';
+          await reloadMemories();
+          toast('নতুন মেমোরি যোগ হয়েছে!', 'success');
+        }
+      });
+    }
+
+    if (els.clearMemoriesBtn) {
+      els.clearMemoriesBtn.addEventListener('click', async () => {
+        if (!state.memories.length) return;
+        if (!window.confirm('সব ব্যাকগ্রাউন্ড মেমোরি মুছে ফেলতে চান?')) return;
+        await apiFetch('/api/memories', { method: 'DELETE' });
+        await reloadMemories();
+        toast('সব মেমোরি মুছে ফেলা হয়েছে।', 'info');
+      });
+    }
+
     els.savePrefsBtn.addEventListener('click', async () => {
       const payload = {
         system_prompt: els.prefSystemPrompt.value,
@@ -1179,7 +1561,9 @@
         body: JSON.stringify(payload),
       });
       state.settings = await resp.json();
+      state.mode = state.settings.default_mode || state.mode;
       renderModelPicker();
+      saveLocalBackup();
       if (window.FreeAIHubVoice) window.FreeAIHubVoice.syncSettings(state.settings);
       toast('সেটিংস সেভ হয়েছে!', 'success');
     });
@@ -1197,7 +1581,8 @@
       });
       state.settings = await resp.json();
       state.pin = pinVal;
-      sessionStorage.setItem('freeai_pin', pinVal);
+      localStorage.setItem(PIN_STORAGE_KEY, pinVal);
+      sessionStorage.setItem(PIN_STORAGE_KEY, pinVal);
       els.prefNewPin.value = '';
       renderPreferencesTab();
       toast('মোবাইল PIN সেট করা হয়েছে!', 'success');
@@ -1211,7 +1596,8 @@
       });
       state.settings = await resp.json();
       state.pin = '';
-      sessionStorage.removeItem('freeai_pin');
+      localStorage.removeItem(PIN_STORAGE_KEY);
+      sessionStorage.removeItem(PIN_STORAGE_KEY);
       renderPreferencesTab();
       toast('PIN লক বন্ধ করা হয়েছে।', 'info');
     });
@@ -1267,7 +1653,14 @@
       conversation_id: state.activeConvId,
       settings: state.settings,
     }),
+    onVoiceConversationCreated: async (conv) => {
+      if (conv?.id) {
+        state.activeConvId = conv.id;
+        await refreshConversations(els.convSearchInput.value.trim());
+      }
+    },
     onVoiceTurnSaved: async () => {
+      await reloadMemories();
       if (state.activeConvId) {
         await loadConversation(state.activeConvId);
         await refreshConversations(els.convSearchInput.value.trim());

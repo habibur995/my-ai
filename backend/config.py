@@ -25,6 +25,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "theme": "dark",
     "default_mode": "auto",
     "auto_fallback": "true",
+    "memory_enabled": "true",
     "voice_engine": "auto",
     "voice_language": "auto",
     "voice_gender": "female",

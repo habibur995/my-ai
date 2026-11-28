@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import DEFAULT_PORT, FRONTEND_DIR, get_lan_ips
 from backend.db import Database, db as default_db
+from backend.memory import build_system_instruction, extract_memories_fast
 from backend.providers import gemini_provider, openai_compat
 from backend.providers.base import ProviderError
 from backend.providers.catalog import PROVIDER_MAP
@@ -41,6 +42,7 @@ class ChatStreamBody(BaseModel):
     prompt: str = ""
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     mode: str = "auto"
+    auto_hint: str = ""
     provider_id: str = ""
     model_id: str = ""
     regenerate: bool = False
@@ -62,6 +64,17 @@ class TtsRequestBody(BaseModel):
     text: str
     language: str = "auto"
     gender: str = "female"
+
+
+class MemoryCreateBody(BaseModel):
+    content: str
+    category: str = "manual"
+
+
+class SyncRestoreBody(BaseModel):
+    conversations: list[dict[str, Any]] = Field(default_factory=list)
+    messages_by_conv: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    memories: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _sse(event_data: dict[str, Any]) -> str:
@@ -88,6 +101,10 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "index.html")
 
+    @app.head("/", include_in_schema=False)
+    async def index_head() -> Response:
+        return Response(status_code=200)
+
     @app.get("/manifest.json", include_in_schema=False)
     async def manifest() -> FileResponse:
         return FileResponse(
@@ -108,6 +125,10 @@ def create_app(
     async def health() -> dict[str, Any]:
         return {"ok": True}
 
+    @app.head("/api/health", include_in_schema=False)
+    async def health_head() -> Response:
+        return Response(status_code=200)
+
     @app.get("/api/auth/status")
     async def auth_status() -> dict[str, Any]:
         return {"pin_enabled": db.is_pin_enabled()}
@@ -125,6 +146,7 @@ def create_app(
             "settings": db.get_settings_public(),
             "providers": db.list_providers_public(),
             "conversations": db.list_conversations(),
+            "memories": db.list_memories(),
             "rate_health": tracker.get_health_summary(),
             "network": {
                 "port": DEFAULT_PORT,
@@ -260,6 +282,41 @@ def create_app(
             raise HTTPException(status_code=400, detail="Invalid JSON object")
         return db.update_settings(updates)
 
+    @app.get("/api/memories", dependencies=[Depends(require_pin)])
+    async def list_memories() -> list[dict[str, Any]]:
+        return db.list_memories()
+
+    @app.post("/api/memories", dependencies=[Depends(require_pin)])
+    async def create_memory(body: MemoryCreateBody) -> dict[str, Any]:
+        if not body.content.strip():
+            raise HTTPException(status_code=400, detail="Memory content is required")
+        return db.add_memory(body.content, category=body.category)
+
+    @app.delete("/api/memories/{mem_id}", dependencies=[Depends(require_pin)])
+    async def delete_memory(mem_id: str) -> dict[str, Any]:
+        if not db.delete_memory(mem_id):
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return {"ok": True}
+
+    @app.delete("/api/memories", dependencies=[Depends(require_pin)])
+    async def clear_memories() -> dict[str, Any]:
+        count = db.clear_memories()
+        return {"ok": True, "deleted": count}
+
+    @app.post("/api/sync/restore", dependencies=[Depends(require_pin)])
+    async def sync_restore(body: SyncRestoreBody) -> dict[str, Any]:
+        counts = db.restore_backup(
+            conversations=body.conversations,
+            messages_by_conv=body.messages_by_conv,
+            memories=body.memories,
+        )
+        return {
+            "ok": True,
+            "restored": counts,
+            "conversations": db.list_conversations(),
+            "memories": db.list_memories(),
+        }
+
     @app.post("/api/tts", dependencies=[Depends(require_pin)])
     async def tts_endpoint(body: TtsRequestBody) -> Response:
         if not body.text.strip():
@@ -308,11 +365,27 @@ def create_app(
 
         settings = db.get_settings_raw()
         auto_fallback = settings.get("auto_fallback", "true").lower() == "true"
-        system_prompt = settings.get("system_prompt", "")
+        memory_enabled = settings.get("memory_enabled", "true").lower() == "true"
+
+        saved_memories: list[dict[str, Any]] = []
+        if memory_enabled and not body.regenerate and body.prompt.strip():
+            for mem_text, mem_cat in extract_memories_fast(body.prompt):
+                try:
+                    saved_memories.append(db.add_memory(mem_text, category=mem_cat))
+                except ValueError:
+                    pass
+
+        system_prompt = build_system_instruction(
+            settings.get("system_prompt", ""),
+            db.list_memories(),
+            memory_enabled=memory_enabled,
+        )
         connected_items = db.get_connected_models()
 
         async def event_gen():
             yield _sse({"type": "conversation", "conversation": conv})
+            if saved_memories:
+                yield _sse({"type": "memory_saved", "memories": saved_memories})
             chunks: list[str] = []
             meta_info: dict[str, Any] = {}
             try:
@@ -321,6 +394,7 @@ def create_app(
                     messages=history[-24:],
                     system_instruction=system_prompt,
                     mode=body.mode or "auto",
+                    auto_hint=body.auto_hint or "",
                     selected_provider=body.provider_id,
                     selected_model=body.model_id,
                     auto_fallback=auto_fallback,
@@ -390,7 +464,18 @@ def create_app(
         history = existing_msgs + [{**user_msg, "attachments": body.attachments}]
 
         settings = db.get_settings_raw()
-        system_prompt = settings.get("system_prompt", "")
+        memory_enabled = settings.get("memory_enabled", "true").lower() == "true"
+        if memory_enabled and body.prompt.strip():
+            for mem_text, mem_cat in extract_memories_fast(body.prompt):
+                try:
+                    db.add_memory(mem_text, category=mem_cat)
+                except ValueError:
+                    pass
+        system_prompt = build_system_instruction(
+            settings.get("system_prompt", ""),
+            db.list_memories(),
+            memory_enabled=memory_enabled,
+        )
         connected_items = db.get_connected_models()
 
         async def event_gen():

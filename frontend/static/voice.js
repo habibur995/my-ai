@@ -373,7 +373,9 @@
         return;
       }
 
-      if (msg.type === 'session_ready') {
+      if (msg.type === 'conversation' && msg.conversation) {
+        window.FreeAIHub?.onVoiceConversationCreated?.(msg.conversation);
+      } else if (msg.type === 'session_ready') {
         voiceState.engine = msg.engine;
         voiceState.hasServerStt = msg.has_server_stt !== false;
         vEls.engineBadge.textContent =

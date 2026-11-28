@@ -1,5 +1,5 @@
 // Minimal service worker so FreeAI Hub installs cleanly as a PWA on Windows & mobile.
-const CACHE_NAME = 'freeai-hub-v2';
+const CACHE_NAME = 'freeai-hub-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

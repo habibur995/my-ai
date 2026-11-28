@@ -20,6 +20,7 @@ from google import genai
 from google.genai import types
 
 from backend.db import Database
+from backend.memory import build_system_instruction, extract_memories_fast
 from backend.providers import gemini_provider, openai_compat
 from backend.providers.base import ProviderError
 from backend.router import stream_chat_with_routing
@@ -217,14 +218,22 @@ async def handle_voice_websocket(ws: WebSocket, db: Database) -> None:
         if mode == "auto" or selected_provider in ("", "gemini"):
             try_gemini_live = True
 
+    memory_enabled = settings.get("memory_enabled", "true").lower() == "true"
+    effective_sys_prompt = build_system_instruction(
+        settings.get("system_prompt", ""),
+        db.list_memories(),
+        memory_enabled=memory_enabled,
+    )
+
     if try_gemini_live and gemini_secret:
         fallback_reason = await _run_gemini_live_bridge(
             ws=ws,
             db=db,
             api_key=gemini_secret["api_key"],
             language=language,
-            system_prompt=settings.get("system_prompt", ""),
+            system_prompt=effective_sys_prompt,
             conversation_id=conversation_id,
+            memory_enabled=memory_enabled,
         )
         if fallback_reason is None:
             return
@@ -246,8 +255,9 @@ async def handle_voice_websocket(ws: WebSocket, db: Database) -> None:
         mode=mode,
         selected_provider=selected_provider,
         selected_model=selected_model,
-        system_prompt=settings.get("system_prompt", ""),
+        system_prompt=effective_sys_prompt,
         conversation_id=conversation_id,
+        memory_enabled=memory_enabled,
     )
 
 
@@ -259,6 +269,7 @@ async def _run_gemini_live_bridge(
     language: str,
     system_prompt: str,
     conversation_id: str,
+    memory_enabled: bool = True,
 ) -> str | None:
     """Bridge client audio/text over WebSocket to Gemini 3.8 Live.
 
@@ -342,7 +353,7 @@ async def _run_gemini_live_bridge(
                         await _safe_send_json(ws, {"type": "pong"})
 
             async def _gemini_to_client() -> None:
-                nonlocal completed_any_turn
+                nonlocal completed_any_turn, conversation_id
                 while not stop_event.is_set():
                     received_any = False
                     async for response in session.receive():
@@ -399,7 +410,20 @@ async def _run_gemini_live_bridge(
                             completed_any_turn = True
                             u_full = "".join(user_transcript_buf).strip()
                             a_full = "".join(assistant_transcript_buf).strip()
-                            if conversation_id and (u_full or a_full):
+                            if memory_enabled and u_full:
+                                for mem_text, mem_cat in extract_memories_fast(u_full):
+                                    try:
+                                        db.add_memory(mem_text, category=mem_cat)
+                                    except ValueError:
+                                        pass
+                            if u_full or a_full:
+                                if not conversation_id:
+                                    title = (u_full or "Live Voice Chat").replace("\n", " ")[:48]
+                                    conv = db.create_conversation(title=title)
+                                    conversation_id = conv["id"]
+                                    await _safe_send_json(
+                                        ws, {"type": "conversation", "conversation": conv}
+                                    )
                                 if u_full:
                                     db.add_message(conversation_id, "user", u_full, route_reason="Live Voice")
                                 if a_full:
@@ -452,6 +476,7 @@ async def _run_universal_voice_loop(
     selected_model: str,
     system_prompt: str,
     conversation_id: str,
+    memory_enabled: bool = True,
 ) -> None:
     """Universal Free Voice loop: PCM/Browser-STT -> Auto-Routed LLM -> Sentence-streamed Edge-TTS."""
     groq_secret = db.get_provider_secret("groq")
@@ -565,18 +590,29 @@ async def _run_universal_voice_loop(
                     )
 
             full_reply = "".join(full_reply_parts).strip()
+            if memory_enabled and clean_text:
+                for mem_text, mem_cat in extract_memories_fast(clean_text):
+                    try:
+                        db.add_memory(mem_text, category=mem_cat)
+                    except ValueError:
+                        pass
             if full_reply:
                 voice_history.append({"role": "assistant", "content": full_reply})
-                if conversation_id:
-                    db.add_message(conversation_id, "user", clean_text, route_reason="Live Voice")
-                    db.add_message(
-                        conversation_id,
-                        "assistant",
-                        full_reply,
-                        provider_id=used_provider,
-                        model_id=used_model,
-                        route_reason=f"Voice · {used_reason}",
-                    )
+                nonlocal conversation_id
+                if not conversation_id:
+                    title = (clean_text or "Live Voice Chat").replace("\n", " ")[:48]
+                    conv = db.create_conversation(title=title)
+                    conversation_id = conv["id"]
+                    await _safe_send_json(ws, {"type": "conversation", "conversation": conv})
+                db.add_message(conversation_id, "user", clean_text, route_reason="Live Voice")
+                db.add_message(
+                    conversation_id,
+                    "assistant",
+                    full_reply,
+                    provider_id=used_provider,
+                    model_id=used_model,
+                    route_reason=f"Voice · {used_reason}",
+                )
             await _safe_send_json(ws, {"type": "turn_complete"})
         except asyncio.CancelledError:
             await _safe_send_json(ws, {"type": "interrupted"})
@@ -608,11 +644,16 @@ async def _run_universal_voice_loop(
             if ev_type == "stop":
                 break
             elif ev_type == "config":
-                language = str(data.get("language") or language)
-                gender = str(data.get("gender") or gender)
-                mode = str(data.get("mode") or mode)
-                selected_provider = str(data.get("provider_id") or "")
-                selected_model = str(data.get("model_id") or "")
+                if data.get("language"):
+                    language = str(data["language"])
+                if data.get("gender"):
+                    gender = str(data["gender"])
+                if data.get("mode"):
+                    mode = str(data["mode"])
+                if "provider_id" in data:
+                    selected_provider = str(data.get("provider_id") or "")
+                if "model_id" in data:
+                    selected_model = str(data.get("model_id") or "")
             elif ev_type == "interrupt":
                 await _cancel_active()
                 audio_buffer.clear()

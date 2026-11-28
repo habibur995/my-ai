@@ -91,6 +91,14 @@ class Database:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'general',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             for k, v in DEFAULT_SETTINGS.items():
@@ -567,6 +575,204 @@ class Database:
             conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
             conn.commit()
             return True
+
+    # ------------------------------------------------------------------
+    # Background User Memory & Client Sync/Restore
+    # ------------------------------------------------------------------
+
+    def list_memories(self, limit: int = 60) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM memories
+                ORDER BY updated_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "content": r["content"],
+                "category": r["category"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def add_memory(self, content: str, category: str = "general") -> dict[str, Any]:
+        clean = " ".join((content or "").strip().split())[:260]
+        if not clean:
+            raise ValueError("Memory content cannot be empty")
+        cat = (category or "general").strip()[:32] or "general"
+        now = _utc_now()
+
+        with self._lock, self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM memories WHERE LOWER(content) = LOWER(?)",
+                (clean,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE memories SET category = ?, updated_at = ? WHERE id = ?",
+                    (cat, now, existing["id"]),
+                )
+                conn.commit()
+                return {
+                    "id": existing["id"],
+                    "content": existing["content"],
+                    "category": cat,
+                    "created_at": existing["created_at"],
+                    "updated_at": now,
+                }
+
+            mem_id = uuid.uuid4().hex[:12]
+            conn.execute(
+                """
+                INSERT INTO memories(id, content, category, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (mem_id, clean, cat, now, now),
+            )
+            # Keep memory store bounded to 60 most recent items
+            conn.execute(
+                """
+                DELETE FROM memories
+                WHERE id NOT IN (
+                    SELECT id FROM memories ORDER BY updated_at DESC, rowid DESC LIMIT 60
+                )
+                """
+            )
+            conn.commit()
+        return {
+            "id": mem_id,
+            "content": clean,
+            "category": cat,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def delete_memory(self, memory_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def clear_memories(self) -> int:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute("DELETE FROM memories")
+            conn.commit()
+            return cur.rowcount
+
+    def restore_backup(
+        self,
+        *,
+        conversations: list[dict[str, Any]] | None = None,
+        messages_by_conv: dict[str, list[dict[str, Any]]] | None = None,
+        memories: list[dict[str, Any]] | None = None,
+    ) -> dict[str, int]:
+        """Idempotently restore conversations, messages, and memories from client backup."""
+        restored_convs = 0
+        restored_msgs = 0
+        restored_mems = 0
+        now = _utc_now()
+
+        with self._lock, self._connect() as conn:
+            for c in (conversations or [])[:60]:
+                cid = str(c.get("id") or "").strip()[:32]
+                if not cid:
+                    continue
+                title = str(c.get("title") or "Restored Chat").strip()[:120] or "Restored Chat"
+                pinned = 1 if c.get("pinned") else 0
+                created_at = str(c.get("created_at") or now)
+                updated_at = str(c.get("updated_at") or created_at)
+                cur = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO conversations(id, title, pinned, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (cid, title, pinned, created_at, updated_at),
+                )
+                if cur.rowcount > 0:
+                    restored_convs += 1
+
+            for cid, msgs in (messages_by_conv or {}).items():
+                clean_cid = str(cid or "").strip()[:32]
+                if not clean_cid or not isinstance(msgs, list):
+                    continue
+                conv_exists = conn.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?",
+                    (clean_cid,),
+                ).fetchone()
+                if not conv_exists:
+                    continue
+                for idx, m in enumerate(msgs[:200]):
+                    mid = str(m.get("id") or f"r_{clean_cid}_{idx}").strip()[:32]
+                    role = "assistant" if m.get("role") == "assistant" else "user"
+                    content = str(m.get("content") or "")
+                    atts = m.get("attachments") if isinstance(m.get("attachments"), list) else []
+                    safe_atts = [
+                        {
+                            "name": str(a.get("name", "file")),
+                            "mime_type": str(a.get("mime_type", "application/octet-stream")),
+                        }
+                        for a in atts
+                        if isinstance(a, dict)
+                    ]
+                    cur = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO messages(
+                            id, conversation_id, role, content, attachments_json,
+                            provider_id, model_id, route_reason, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            mid,
+                            clean_cid,
+                            role,
+                            content,
+                            json.dumps(safe_atts, ensure_ascii=False),
+                            str(m.get("provider_id") or ""),
+                            str(m.get("model_id") or ""),
+                            str(m.get("route_reason") or ""),
+                            str(m.get("created_at") or now),
+                        ),
+                    )
+                    if cur.rowcount > 0:
+                        restored_msgs += 1
+
+            for mem in (memories or [])[:60]:
+                content = " ".join(str(mem.get("content") or "").strip().split())[:260]
+                if not content:
+                    continue
+                dup = conn.execute(
+                    "SELECT 1 FROM memories WHERE LOWER(content) = LOWER(?)",
+                    (content,),
+                ).fetchone()
+                if dup:
+                    continue
+                mem_id = str(mem.get("id") or uuid.uuid4().hex[:12]).strip()[:32]
+                cat = str(mem.get("category") or "general").strip()[:32] or "general"
+                created_at = str(mem.get("created_at") or now)
+                updated_at = str(mem.get("updated_at") or created_at)
+                cur = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO memories(id, content, category, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (mem_id, content, cat, created_at, updated_at),
+                )
+                if cur.rowcount > 0:
+                    restored_mems += 1
+
+            conn.commit()
+
+        return {
+            "conversations": restored_convs,
+            "messages": restored_msgs,
+            "memories": restored_mems,
+        }
 
     def seed_from_env(self, environ: Mapping[str, str] | None = None) -> list[str]:
         """Seed missing provider API keys and optional access PIN from environment secrets.

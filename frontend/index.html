@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/styles.css?v=5" />
   <script defer src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/highlight.min.js"></script>
 </head>
@@ -72,6 +72,10 @@
           <span>কোনো API যুক্ত নেই</span>
         </div>
         <div class="sidebar-footer-btns">
+          <button id="openMemoryBtn" class="btn-ghost-full" title="ব্যাকগ্রাউন্ড মেমোরি দেখুন ও পরিচালনা করুন">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>
+            <span id="sidebarMemoryLabel">ব্যাকগ্রাউন্ড মেমোরি</span>
+          </button>
           <button id="openSettingsBtn" class="btn-ghost-full">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
             <span>Free API Keys ও সেটিংস</span>
@@ -216,7 +220,13 @@
               <button id="attachBtn" class="icon-btn composer-icon" title="ছবি বা টেক্সট ফাইল যুক্ত করুন" aria-label="Attach file">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               </button>
-              <span id="composerRouteHint" class="route-pill-hint">Auto · কমান্ড অনুযায়ী সেরা ফ্রি মডেল</span>
+              <div class="auto-cmd-wrap">
+                <button id="composerRouteHint" type="button" class="route-pill-hint" aria-haspopup="listbox" aria-expanded="false" title="অটো কমান্ড বা মডেল সিলেক্ট করুন">
+                  <span id="composerRouteLabel">Auto · কমান্ড অনুযায়ী সেরা ফ্রি মডেল</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <div id="autoCommandMenu" class="auto-cmd-menu hidden" role="listbox"></div>
+              </div>
             </div>
             <div class="composer-tools-right">
               <button id="composerVoiceBtn" class="icon-btn composer-icon voice-wave-btn" title="লাইভ ভয়েস কল" aria-label="Live Voice">
@@ -247,6 +257,7 @@
 
       <div class="modal-tabs">
         <button class="tab-btn active" data-tab="providers">🔑 Free API Keys</button>
+        <button class="tab-btn" data-tab="memory">🧠 মেমোরি</button>
         <button class="tab-btn" data-tab="preferences">⚙️ পছন্দ ও সিকিউরিটি</button>
         <button class="tab-btn" data-tab="mobile">📱 মোবাইল অ্যাক্সেস</button>
       </div>
@@ -257,6 +268,27 @@
             এখানে কোনো পেইড বিলিং বা কার্ডের অপশন নেই। যে প্রোভাইডারের ফ্রি API key দেবেন, সেটি সাথে সাথে টেস্ট হয়ে তার ফ্রি মডেলগুলো যুক্ত হবে।
           </div>
           <div id="providersList" class="providers-grid"></div>
+        </div>
+
+        <div id="tabMemory" class="tab-pane">
+          <div class="info-banner">
+            ব্যাকগ্রাউন্ড মেমোরি চালু থাকলে আপনি যেকোনো চ্যাটে আপনার নাম, পছন্দ বা <strong>"মনে রাখো..."</strong> বললে AI তা মনে রাখবে — এবং অ্যাপ থেকে বের হয়ে গেলেও আপনার ব্রাউজারে চ্যাট ও মেমোরি নিরাপদে ব্যাকআপ থাকবে।
+          </div>
+
+          <div class="memory-toolbar">
+            <label class="memory-toggle-label">
+              <input id="prefMemoryEnabled" type="checkbox" checked />
+              <span>অটো ব্যাকগ্রাউন্ড মেমোরি চালু রাখুন</span>
+            </label>
+            <button id="clearMemoriesBtn" type="button" class="btn-danger-outline">সব মেমোরি মুছুন</button>
+          </div>
+
+          <form id="memoryAddForm" class="memory-add-form">
+            <input id="memoryAddInput" type="text" placeholder="যেমন: আমার নাম হাবিব, আমি বাংলায় সংক্ষিপ্ত উত্তর পছন্দ করি..." autocomplete="off" />
+            <button type="submit" class="btn-primary">যোগ করুন</button>
+          </form>
+
+          <div id="memoryList" class="memory-list"></div>
         </div>
 
         <div id="tabPreferences" class="tab-pane">
@@ -414,7 +446,7 @@
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script defer src="/static/app.js?v=4"></script>
-  <script defer src="/static/voice.js?v=4"></script>
+  <script defer src="/static/app.js?v=5"></script>
+  <script defer src="/static/voice.js?v=5"></script>
 </body>
 </html>

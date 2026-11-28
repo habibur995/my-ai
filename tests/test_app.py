@@ -364,3 +364,95 @@ def test_seed_from_env_preserves_existing_keys_and_sets_pin(isolated_env) -> Non
     resp = client.get("/api/bootstrap", headers={"X-Access-Pin": "4321"})
     assert resp.status_code == 200
     assert "AIzaSyEnvSeededSecret9999" not in resp.text
+
+
+def test_background_memory_extraction_injection_and_sync_restore(isolated_env) -> None:
+    db, _, _, client = isolated_env
+
+    # HEAD health checks should return 200 (no 405 noise on Render)
+    assert client.head("/").status_code == 200
+    assert client.head("/api/health").status_code == 200
+
+    # Manual memory CRUD
+    m_resp = client.post("/api/memories", json={"content": "আমার নাম হাবিব", "category": "manual"})
+    assert m_resp.status_code == 200
+    mem_id = m_resp.json()["id"]
+    assert len(client.get("/api/memories").json()) == 1
+
+    # Connect mock provider and verify automatic Bengali memory extraction + system prompt injection
+    db.save_provider(
+        "gemini",
+        api_key="AIzaTestMem",
+        models=[
+            ModelInfo(
+                id="gemini-3.5-flash-lite",
+                label="Gemini 3.5 Flash-Lite",
+                provider_id="gemini",
+                coding_rank=84,
+                speed_rank=96,
+            )
+        ],
+        status="ok",
+        tested=True,
+    )
+    captured_sys: list[str] = []
+
+    async def fake_stream(**kwargs):
+        captured_sys.append(kwargs.get("system_instruction", ""))
+        yield "মনে রাখলাম!"
+
+    with patch("backend.providers.gemini_provider.stream_chat", side_effect=fake_stream):
+        r = client.post(
+            "/api/chat/stream",
+            json={
+                "prompt": "মনে রাখো আমি পাইথন ও FastAPI নিয়ে কাজ করি",
+                "mode": "auto",
+                "auto_hint": "coding",
+            },
+        )
+        assert r.status_code == 200
+        assert "memory_saved" in r.text
+        assert "Auto · Coding" in r.text
+
+    assert captured_sys and "আমার নাম হাবিব" in captured_sys[0]
+    assert "পাইথন ও FastAPI" in captured_sys[0]
+
+    # Auto-hint classification check
+    assert classify_prompt("hi", auto_hint="fast") == ("fast", "Auto · Ultra-Fast")
+    assert classify_prompt("hi", auto_hint="coding") == ("coding", "Auto · Coding")
+    assert classify_prompt("hi", auto_hint="multilingual") == ("multilingual", "Auto · বাংলা / Multilingual")
+
+    # Delete memory
+    assert client.delete(f"/api/memories/{mem_id}").status_code == 200
+
+    # Backup sync/restore idempotency (simulating Render ephemeral disk restart)
+    restore_resp = client.post(
+        "/api/sync/restore",
+        json={
+            "conversations": [{"id": "conv_old_1", "title": "পুরনো চ্যাট", "pinned": True}],
+            "messages_by_conv": {
+                "conv_old_1": [
+                    {"id": "m1", "role": "user", "content": "হ্যালো"},
+                    {"id": "m2", "role": "assistant", "content": "নমস্কার!"},
+                ]
+            },
+            "memories": [{"id": "mem_old_1", "content": "সবসময় বাংলায় উত্তর দেবে", "category": "preference"}],
+        },
+    )
+    assert restore_resp.status_code == 200
+    body = restore_resp.json()
+    assert body["restored"]["conversations"] == 1
+    assert body["restored"]["messages"] == 2
+    assert body["restored"]["memories"] == 1
+    assert len(client.get("/api/conversations/conv_old_1/messages").json()) == 2
+
+    # Second restore call must be idempotent (0 duplicates)
+    restore_again = client.post(
+        "/api/sync/restore",
+        json={
+            "conversations": [{"id": "conv_old_1", "title": "পুরনো চ্যাট", "pinned": True}],
+            "messages_by_conv": {"conv_old_1": [{"id": "m1", "role": "user", "content": "হ্যালো"}]},
+            "memories": [{"id": "mem_old_1", "content": "সবসময় বাংলায় উত্তর দেবে", "category": "preference"}],
+        },
+    )
+    assert restore_again.json()["restored"] == {"conversations": 0, "messages": 0, "memories": 0}

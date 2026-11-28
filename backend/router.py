@@ -117,12 +117,23 @@ def classify_prompt(
     prompt: str,
     attachments: list[dict[str, Any]] | None = None,
     history_chars: int = 0,
+    auto_hint: str = "",
 ) -> tuple[str, str]:
     """Classify the user turn into a routing category and human-readable badge label."""
     atts = attachments or []
     has_image = any(str(a.get("mime_type", "")).startswith("image/") for a in atts)
     if has_image:
         return "vision", "Auto · Vision"
+
+    hint = (auto_hint or "").strip().lower()
+    hint_map = {
+        "coding": ("coding", "Auto · Coding"),
+        "multilingual": ("multilingual", "Auto · বাংলা / Multilingual"),
+        "long_context": ("long_context", "Auto · Long Context"),
+        "fast": ("fast", "Auto · Ultra-Fast"),
+    }
+    if hint in hint_map:
+        return hint_map[hint]
 
     has_text_file = any(
         bool(a.get("text_content")) or str(a.get("mime_type", "")).startswith("text/")
@@ -173,6 +184,10 @@ def _score_model(model: ModelInfo, category: str) -> float:
     if category == "multilingual":
         multi_bonus = 18.0 if model.provider_id in ("gemini", "groq", "cohere") else 4.0
         return model.speed_rank * 1.05 + model.coding_rank * 0.95 + multi_bonus
+
+    if category == "fast":
+        fast_bonus = 18.0 if model.provider_id in ("groq", "gemini") else 4.0
+        return model.speed_rank * 2.0 + model.coding_rank * 0.3 + fast_bonus
 
     # general
     return model.speed_rank * 1.3 + model.coding_rank * 0.7 + provider_bonus
@@ -287,6 +302,7 @@ async def stream_chat_with_routing(
     messages: list[dict[str, Any]],
     system_instruction: str = "",
     mode: str = "auto",
+    auto_hint: str = "",
     selected_provider: str = "",
     selected_model: str = "",
     auto_fallback: bool = True,
@@ -299,7 +315,7 @@ async def stream_chat_with_routing(
     atts = last_user_msg.get("attachments") or []
     history_chars = sum(len(str(m.get("content", "") or "")) for m in messages[:-1])
 
-    category, category_label = classify_prompt(prompt_text, atts, history_chars)
+    category, category_label = classify_prompt(prompt_text, atts, history_chars, auto_hint=auto_hint)
     candidates = build_candidate_chain(
         connected_items,
         mode=mode,
