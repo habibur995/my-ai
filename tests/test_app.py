@@ -338,3 +338,29 @@ def test_non_chat_model_filters() -> None:
 
     compat_py = (ROOT / "backend" / "providers" / "openai_compat.py").read_text(encoding="utf-8")
     assert '"transcribe"' in compat_py
+
+
+def test_seed_from_env_preserves_existing_keys_and_sets_pin(isolated_env) -> None:
+    db, _, _, client = isolated_env
+    db.save_provider("groq", api_key="gsk_existing_ui_key", status="ok", tested=True)
+
+    seeded = db.seed_from_env(
+        {
+            "GEMINI_API_KEY": "AIzaSyEnvSeededSecret9999",
+            "GROQ_API_KEY": "gsk_should_not_overwrite",
+            "FREEAI_ACCESS_PIN": "4321",
+        }
+    )
+    assert "gemini" in seeded
+    assert "groq" not in seeded
+    assert "access_pin" in seeded
+
+    assert db.get_provider_secret("gemini")["api_key"] == "AIzaSyEnvSeededSecret9999"
+    assert db.get_provider_secret("groq")["api_key"] == "gsk_existing_ui_key"
+    assert db.is_pin_enabled() is True
+    assert db.verify_pin("4321") is True
+
+    # Ensure raw secret is never exposed even when seeded from env
+    resp = client.get("/api/bootstrap", headers={"X-Access-Pin": "4321"})
+    assert resp.status_code == 200
+    assert "AIzaSyEnvSeededSecret9999" not in resp.text

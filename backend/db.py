@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,15 @@ from backend.config import DB_PATH, DEFAULT_SETTINGS, ensure_data_dir
 from backend.crypto import KeyVault
 from backend.providers.base import ModelInfo
 from backend.providers.catalog import CURATED_MODELS, PROVIDER_MAP, PROVIDER_SPECS
+
+ENV_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "groq": ("GROQ_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "nvidia": ("NVIDIA_API_KEY",),
+    "cohere": ("COHERE_API_KEY",),
+    "huggingface": ("HF_API_KEY", "HUGGINGFACE_API_KEY"),
+}
 
 
 def _utc_now() -> str:
@@ -557,5 +568,40 @@ class Database:
             conn.commit()
             return True
 
+    def seed_from_env(self, environ: Mapping[str, str] | None = None) -> list[str]:
+        """Seed missing provider API keys and optional access PIN from environment secrets.
+
+        Useful on ephemeral free hosts (such as Hugging Face Spaces free tier) where
+        container disk resets on rebuild/restart, without overwriting keys already saved via UI.
+        """
+        env = os.environ if environ is None else environ
+        seeded: list[str] = []
+
+        for provider_id, env_names in ENV_PROVIDER_KEYS.items():
+            existing = self.get_provider_secret(provider_id)
+            if existing and existing.get("api_key"):
+                continue
+            for name in env_names:
+                val = (env.get(name) or "").strip()
+                if val:
+                    self.save_provider(
+                        provider_id,
+                        api_key=val,
+                        enabled=True,
+                        status="ok",
+                        status_message=f"Configured via {name}",
+                        tested=True,
+                    )
+                    seeded.append(provider_id)
+                    break
+
+        pin_env = (env.get("FREEAI_ACCESS_PIN") or "").strip()
+        if pin_env and not self.is_pin_enabled():
+            self.update_settings({"access_pin": pin_env})
+            seeded.append("access_pin")
+
+        return seeded
+
 
 db = Database()
+db.seed_from_env()

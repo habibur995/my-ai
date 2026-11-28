@@ -33,3 +33,12 @@
 - `backend/` — এনক্রিপ্টেড Key Vault (`crypto.py`), SQLite স্টোরেজ (`db.py`), ফ্রি প্রোভাইডার অ্যাডাপ্টার (`providers/`), Auto-Router (`router.py`), এবং Dual Voice Engine (`voice.py`)
 - `frontend/` — রেসপনসিভ Dark/Light PWA ইন্টারফেস ও AudioWorklet ভয়েস ক্লায়েন্ট
 - `tests/test_app.py` — স্বয়ংক্রিয় pytest টেস্ট স্যুইট
+
+## ফ্রি ক্লাউড হোস্টিং (Render.com — 1-Click Docker)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/habibur995/my-ai)
+
+1. উপরের **Deploy to Render** বাটনে ক্লিক করে GitHub দিয়ে সাইন ইন করুন (`render.yaml` অটো-ডিটেক্ট হবে)।
+2. ফ্রি টিয়ারে কন্টেইনার রিস্টার্ট হলে API key স্থায়ী রাখতে Render Dashboard → **Environment** ট্যাবে নিচের যেকোনো এনভায়রনমেন্ট ভ্যারিয়েবল যোগ করুন:
+   - `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `COHERE_API_KEY`, `HF_API_KEY`
+   - `FREEAI_ACCESS_PIN` (মোবাইল/পাবলিক অ্যাক্সেস লক করতে)
